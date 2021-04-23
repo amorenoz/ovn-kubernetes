@@ -3,9 +3,14 @@
 package util
 
 import (
+	"fmt"
+	"io/ioutil"
 	"net"
+	"path/filepath"
+	"strings"
 
 	"github.com/Mellanox/sriovnet"
+	"github.com/redhat-virtio-net/govdpa/pkg/kvdpa"
 )
 
 type SriovnetOps interface {
@@ -35,6 +40,16 @@ func GetSriovnetOps() SriovnetOps {
 }
 
 func (defaultSriovnetOps) GetNetDevicesFromPci(pciAddress string) ([]string, error) {
+	vdpaDev, err := kvdpa.GetVdpaDeviceByPci(pciAddress)
+	if err == nil && vdpaDev.GetDriver() == kvdpa.VirtioVdpaDriver {
+		virtioNetDir := filepath.Join(vdpaDev.GetPath(), "net")
+		netDeviceFiles, err := ioutil.ReadDir(virtioNetDir)
+		if err != nil || len(netDeviceFiles) != 1 {
+			return nil, fmt.Errorf("failed to get network device name from vdpa device in %v %v", vdpaDev.GetParent(), err)
+		}
+
+		return []string{strings.TrimSpace(netDeviceFiles[0].Name())}, nil
+	}
 	return sriovnet.GetNetDevicesFromPci(pciAddress)
 }
 
