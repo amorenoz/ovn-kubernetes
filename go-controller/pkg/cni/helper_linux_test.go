@@ -428,14 +428,19 @@ func TestSetupSriovInterface(t *testing.T) {
 	mockSriovnetOps := new(util_mocks.SriovnetOps)
 	mockNS := new(cni_ns_mocks.NetNS)
 	mockLink := new(netlink_mocks.Link)
+	mockVdpaOps := new(util_mocks.VdpaOps)
+	mockVdpaDev := new(util_mocks.VdpaDevice)
 	// below sets the `netLinkOps` in util/net_linux.go to a mock instance for purpose of unit tests execution
 	util.SetNetLinkOpMockInst(mockNetLinkOps)
 	// `cniPluginLibOps` is defined in helper_linux.go
 	cniPluginLibOps = mockCNIPlugin
 	// set `sriovnetOps` in util/sriovnet_linux.go to a mock instance for unit tests execution
 	util.SetSriovnetOpsInst(mockSriovnetOps)
+	// set `vdpaOps` in util/vdpa_linux.go to a mock instance for unit tests execution
+	util.SetVdpaOpsInst(mockVdpaOps)
 
 	res, err := sriovnet.GetUplinkRepresentor("0000:01:00.0")
+
 	t.Log(res, err)
 	/* Need the below to test the Do() function that requires root and needs to be figured out
 	testOSNameSpace, err := ns.GetCurrentNS()
@@ -458,6 +463,8 @@ func TestSetupSriovInterface(t *testing.T) {
 		netLinkOpsMockHelper []ovntest.TestifyMockHelper
 		sriovOpsMockHelper   []ovntest.TestifyMockHelper
 		linkMockHelper       []ovntest.TestifyMockHelper
+		vdpaOpsMockHelper    []ovntest.TestifyMockHelper
+		vdpaDevMockHelper    []ovntest.TestifyMockHelper
 	}{
 		{
 			desc:         "test code path when GetNetDevicesFromPci() returns error",
@@ -472,6 +479,9 @@ func TestSetupSriovInterface(t *testing.T) {
 			errExp:      true,
 			sriovOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "GetNetDevicesFromPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -489,6 +499,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				// e.g; `ls -l /sys/bus/pci/devices/0000:01:00.0/net/` is the equivalent command line to get devices info
 				{OnCallMethodName: "GetNetDevicesFromPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{[]string{"en01", "eno2"}, nil}},
 			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
+			},
 		},
 		{
 			desc:         "test code path when GetUplinkRepresentor() returns error",
@@ -504,6 +517,9 @@ func TestSetupSriovInterface(t *testing.T) {
 			sriovOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "GetNetDevicesFromPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{[]string{"en01"}, nil}},
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"", fmt.Errorf("mock error")}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -522,6 +538,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
 				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{-1, fmt.Errorf("mock error")}},
 			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
+			},
 		},
 		{
 			desc:         "test code path when GetVfRepresentor() returns error",
@@ -539,6 +558,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
 				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
 				{OnCallMethodName: "GetVfRepresentor", OnCallMethodArgType: []string{"string", "int"}, RetArgList: []interface{}{"", fmt.Errorf("mock error")}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -561,6 +583,9 @@ func TestSetupSriovInterface(t *testing.T) {
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				// The below is mocked for the renameLink() method that internally invokes LinkByName
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -588,6 +613,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
 				// The below mock call is needed for the LinkByName() invocation right after the renameLink() method
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -621,6 +649,9 @@ func TestSetupSriovInterface(t *testing.T) {
 			linkMockHelper: []ovntest.TestifyMockHelper{
 				// The below mock call is to retrieve the MAC address of host interface right before LinkSetMTU() method
 				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -656,6 +687,9 @@ func TestSetupSriovInterface(t *testing.T) {
 			linkMockHelper: []ovntest.TestifyMockHelper{
 				// The below mock call is to retrieve the MAC address of host interface right before LinkSetMTU() method
 				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
 			},
 		},
 		{
@@ -698,6 +732,55 @@ func TestSetupSriovInterface(t *testing.T) {
 				// The below mock call is for the netns.Do() invocation
 				{OnCallMethodName: "Do", OnCallMethodArgType: []string{"func(ns.NetNS) error"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
+			},
+		},
+		{
+			desc:         "test code path when GetVdpaDeviceByPci() returns a valid virtio vdpa device",
+			inpNetNS:     mockNS,
+			inpContID:    "35b82dbe2c39768d9874861aee38cf569766d4855b525ae02bff2bfbda73392a",
+			inpIfaceName: "eth0",
+			inpPodIfaceInfo: &PodInterfaceInfo{
+				PodAnnotation: util.PodAnnotation{},
+				MTU:           1500,
+			},
+			inpPCIAddrs: "0000:03:00.1",
+			errExp:      false,
+			sriovOpsMockHelper: []ovntest.TestifyMockHelper{
+				// Note we don't mock GetNetDevicesFromPci(). The test shall fail if it gets called
+				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
+				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
+				{OnCallMethodName: "GetVfRepresentor", OnCallMethodArgType: []string{"string", "int"}, RetArgList: []interface{}{"VFRepresentor", nil}},
+			},
+			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
+				// The below 4 calls are mocked for the renameLink() method that internally invokes the below 4 calls
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "LinkSetDown", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "LinkSetName", OnCallMethodArgType: []string{"*mocks.Link", "string"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
+				// The below mock call is needed for the LinkByName() invocation right after the renameLink() method
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{mockLink, nil}},
+				// The below mock call is self-explanatory and is for the LinkSetMTU() method
+				{OnCallMethodName: "LinkSetMTU", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
+				// The below two mock calls are needed for the moveIfToNetns() call that internally invokes them
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "LinkSetNsFd", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
+			},
+			linkMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+			},
+			nsMockHelper: []ovntest.TestifyMockHelper{
+				// The below mock call is needed when moveIfToNetns() is called
+				{OnCallMethodName: "Fd", OnCallMethodArgType: []string{}, RetArgList: []interface{}{uintptr(123456)}},
+				// The below mock call is for the netns.Do() invocation
+				{OnCallMethodName: "Do", OnCallMethodArgType: []string{"func(ns.NetNS) error"}, RetArgList: []interface{}{nil}},
+			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockVdpaDev, nil}}},
+			vdpaDevMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetDriver", OnCallMethodArgType: []string{}, RetArgList: []interface{}{"virtio_vdpa"}},
+				{OnCallMethodName: "GetNetDev", OnCallMethodArgType: []string{}, RetArgList: []interface{}{"eth8"}},
+			},
 		},
 		{
 			desc:         "test code path when working in DPUHost mode",
@@ -726,6 +809,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				// The below mock call is for the netns.Do() invocation
 				{OnCallMethodName: "Do", OnCallMethodArgType: []string{"func(ns.NetNS) error"}, RetArgList: []interface{}{nil}},
 			},
+			vdpaOpsMockHelper: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "GetVdpaDeviceByPci", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("no vdpa device found")}},
+			},
 		},
 	}
 	for i, tc := range tests {
@@ -735,6 +821,8 @@ func TestSetupSriovInterface(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNS.Mock, tc.nsMockHelper)
 			ovntest.ProcessMockFnList(&mockSriovnetOps.Mock, tc.sriovOpsMockHelper)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.linkMockHelper)
+			ovntest.ProcessMockFnList(&mockVdpaOps.Mock, tc.vdpaOpsMockHelper)
+			ovntest.ProcessMockFnList(&mockVdpaDev.Mock, tc.vdpaDevMockHelper)
 
 			hostIface, contIface, err := setupSriovInterface(tc.inpNetNS, tc.inpContID, tc.inpIfaceName, tc.inpPodIfaceInfo, tc.inpPCIAddrs)
 			t.Log(hostIface, contIface, err)

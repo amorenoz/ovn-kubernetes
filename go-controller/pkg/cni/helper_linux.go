@@ -21,6 +21,7 @@ import (
 	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/redhat-virtio-net/govdpa/pkg/kvdpa"
 	"github.com/vishvananda/netlink"
 )
 
@@ -169,17 +170,24 @@ func setupSriovInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 	contIface := &current.Interface{}
 
 	// 1. get VF netdevice from PCI
-	vfNetdevices, err := util.GetSriovnetOps().GetNetDevicesFromPci(pciAddrs)
-	if err != nil {
-		return nil, nil, err
+	var vfNetdevice string
 
-	}
+	vdpaDevice, err := util.GetVdpaOps().GetVdpaDeviceByPci(pciAddrs)
+	if err == nil && vdpaDevice.GetDriver() == kvdpa.VirtioVdpaDriver {
+		vfNetdevice = vdpaDevice.GetNetDev()
+	} else {
+		vfNetdevices, err := util.GetSriovnetOps().GetNetDevicesFromPci(pciAddrs)
+		if err != nil {
+			return nil, nil, err
 
-	// Make sure we have 1 netdevice per pci address
-	if len(vfNetdevices) != 1 {
-		return nil, nil, fmt.Errorf("failed to get one netdevice interface per %s", pciAddrs)
+		}
+
+		// Make sure we have 1 netdevice per pci address
+		if len(vfNetdevices) != 1 {
+			return nil, nil, fmt.Errorf("failed to get one netdevice interface per %s", pciAddrs)
+		}
+		vfNetdevice = vfNetdevices[0]
 	}
-	vfNetdevice := vfNetdevices[0]
 
 	if !ifInfo.IsDPUHostMode {
 		// 2. get Uplink netdevice

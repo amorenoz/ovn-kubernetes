@@ -26,6 +26,7 @@ require (
 	github.com/ovn-org/libovsdb v0.6.1-0.20211119175802-998d2ca8998d
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.11.0
+	github.com/redhat-virtio-net/govdpa v0.1.3-0.20211214093240-ad0e17e5dfa0
 	github.com/spf13/afero v1.4.1
 	github.com/stretchr/testify v1.7.0
 	github.com/urfave/cli/v2 v2.2.0
