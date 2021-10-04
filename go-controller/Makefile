@@ -78,7 +78,7 @@ else
 endif
 
 pkg/nbdb/ovn-nb.ovsschema:
-	curl -sSL https://raw.githubusercontent.com/ovn-org/ovn/$(OVN_VERSION)/ovn-nb.ovsschema -o $@
+	curl -sSL https://raw.githubusercontent.com/dceara/ovn/lb-groups/ovn-nb.ovsschema -o $@
 
 pkg/sbdb/ovn-sb.ovsschema:
-	curl -sSL https://raw.githubusercontent.com/ovn-org/ovn/$(OVN_VERSION)/ovn-sb.ovsschema -o $@
+	curl -sSL https://raw.githubusercontent.com/dceara/ovn/lb-groups/ovn-sb.ovsschema -o $@
