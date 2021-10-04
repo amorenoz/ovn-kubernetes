@@ -116,4 +116,6 @@ const (
 
 	ClusterPortGroupName    = "clusterPortGroup"
 	ClusterRtrPortGroupName = "clusterRtrPortGroup"
+
+	ClusterLBGroupName = "clusterLBGroup"
 )

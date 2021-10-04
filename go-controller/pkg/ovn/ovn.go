@@ -144,6 +144,10 @@ type Controller struct {
 	// to add a ingress deny rule.
 	lspIngressDenyCache map[string]int
 
+	// UUID of the cluster-wide load balancer group (if OVN supports
+	// Load_Balancer_Group); empty string if groups are not supported.
+	clusterLBGroupUUID string
+
 	// For each logical port, the number of network policies that want
 	// to add a egress deny rule.
 	lspEgressDenyCache map[string]int
@@ -1231,7 +1235,7 @@ func (oc *Controller) StartServiceController(wg *sync.WaitGroup, runRepair bool)
 		defer wg.Done()
 		// use 5 workers like most of the kubernetes controllers in the
 		// kubernetes controller-manager
-		err := oc.svcController.Run(5, oc.stopChan, runRepair)
+		err := oc.svcController.Run(5, oc.stopChan, runRepair, oc.clusterLBGroupUUID != "")
 		if err != nil {
 			klog.Errorf("Error running OVN Kubernetes Services controller: %v", err)
 		}

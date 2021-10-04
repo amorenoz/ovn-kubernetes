@@ -33,6 +33,7 @@ const (
 	k8sIdlingSCTPLoadBalancerIP = "k8s_sctp_idling_load_balancer"
 	fakeUUID                    = "8a86f6d8-7972-4253-b0bd-ddbef66e9303"
 	fakeUUIDv6                  = "8a86f6d8-7972-4253-b0bd-ddbef66e9304"
+	fakeLBGUUID                 = "8a86f6d8-7972-4253-b0bd-ddbef66e9305"
 	fakePgUUID                  = "bf02f460-5058-4689-8fcb-d31a1e484ed2"
 	ovnClusterPortGroupUUID     = fakePgUUID
 )

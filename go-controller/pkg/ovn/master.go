@@ -366,6 +366,24 @@ func (oc *Controller) StartClusterMaster(masterNodeName string) error {
 		}
 	}
 
+	if _, _, err := util.RunOVNNbctl("--columns=_uuid", "list", "Load_Balancer_Group"); err != nil {
+		klog.Warningf("Load Balancer Group support enabled, however version of OVN in use does not support Load Balancer Groups. " +
+			"Disabling Load Balancer Groups")
+		oc.clusterLBGroupUUID = ""
+	} else {
+		oc.clusterLBGroupUUID, _, err = util.RunOVNNbctl("get", "Load_Balancer_Group", types.ClusterLBGroupName, "_uuid")
+		if err != nil || oc.clusterLBGroupUUID == "" {
+			stdout, stderr, err := util.RunOVNNbctl("create", "Load_Balancer_Group", "name="+types.ClusterLBGroupName)
+			if err != nil {
+				klog.Errorf("Error creating cluster-wide load balancer group "+
+					"stdout: %q, stderr: %q (%v)", stdout, stderr, err)
+				oc.clusterLBGroupUUID = ""
+			} else {
+				oc.clusterLBGroupUUID = stdout
+			}
+		}
+	}
+
 	if err := oc.SetupMaster(masterNodeName, nodeNames); err != nil {
 		klog.Errorf("Failed to setup master (%v)", err)
 		return err
@@ -613,7 +631,7 @@ func (oc *Controller) syncGatewayLogicalNetwork(node *kapi.Node, l3GatewayConfig
 	}
 
 	drLRPIPs, _ := oc.joinSwIPManager.EnsureJoinLRPIPs(types.OVNClusterRouter)
-	err = gatewayInit(node.Name, clusterSubnets, hostSubnets, l3GatewayConfig, oc.SCTPSupport, gwLRPIPs, drLRPIPs)
+	err = gatewayInit(node.Name, clusterSubnets, hostSubnets, l3GatewayConfig, oc.SCTPSupport, gwLRPIPs, drLRPIPs, oc.clusterLBGroupUUID)
 	if err != nil {
 		return fmt.Errorf("failed to init shared interface gateway: %v", err)
 	}
@@ -747,6 +765,13 @@ func (oc *Controller) ensureNodeLogicalNetwork(node *kapi.Node, hostSubnets []*n
 				"other-config:exclude_ips="+excludeIPs,
 			)
 		}
+	}
+
+	if oc.clusterLBGroupUUID != "" {
+		lsArgs = append(lsArgs,
+			"--", "add", "logical_switch", nodeName,
+			"load_balancer_group", oc.clusterLBGroupUUID,
+		)
 	}
 
 	// Create a logical switch and set its subnet.
