@@ -18,10 +18,10 @@ var (
 	ACLDirectionFromLport   ACLDirection = "from-lport"
 	ACLDirectionToLport     ACLDirection = "to-lport"
 	ACLSeverityAlert        ACLSeverity  = "alert"
-	ACLSeverityDebug        ACLSeverity  = "debug"
-	ACLSeverityInfo         ACLSeverity  = "info"
-	ACLSeverityNotice       ACLSeverity  = "notice"
 	ACLSeverityWarning      ACLSeverity  = "warning"
+	ACLSeverityNotice       ACLSeverity  = "notice"
+	ACLSeverityInfo         ACLSeverity  = "info"
+	ACLSeverityDebug        ACLSeverity  = "debug"
 )
 
 // ACL defines an object in ACL table
@@ -30,6 +30,7 @@ type ACL struct {
 	Action      ACLAction         `ovsdb:"action"`
 	Direction   ACLDirection      `ovsdb:"direction"`
 	ExternalIDs map[string]string `ovsdb:"external_ids"`
+	Label       int               `ovsdb:"label"`
 	Log         bool              `ovsdb:"log"`
 	Match       string            `ovsdb:"match"`
 	Meter       *string           `ovsdb:"meter"`
