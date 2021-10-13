@@ -6,13 +6,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ovn-org/libovsdb/cache"
-	"github.com/ovn-org/libovsdb/mapper"
 	"github.com/ovn-org/libovsdb/ovsdb"
 )
 
-func (o *OvsdbServer) transact(name string, operations []ovsdb.Operation) ([]ovsdb.OperationResult, ovsdb.TableUpdates) {
+func (o *OvsdbServer) transact(name string, operations []ovsdb.Operation) ([]ovsdb.OperationResult, ovsdb.TableUpdates2) {
 	results := []ovsdb.OperationResult{}
-	updates := make(ovsdb.TableUpdates)
+	updates := make(ovsdb.TableUpdates2)
 	for _, op := range operations {
 		switch op.Op {
 		case ovsdb.OperationInsert:
@@ -65,7 +64,7 @@ func (o *OvsdbServer) transact(name string, operations []ovsdb.Operation) ([]ovs
 	return results, updates
 }
 
-func (o *OvsdbServer) Insert(database string, table string, rowUUID string, row ovsdb.Row) (ovsdb.OperationResult, ovsdb.TableUpdates) {
+func (o *OvsdbServer) Insert(database string, table string, rowUUID string, row ovsdb.Row) (ovsdb.OperationResult, ovsdb.TableUpdates2) {
 	if !o.db.Exists(database) {
 		return ovsdb.OperationResult{
 			Error: "database does not exist",
@@ -75,21 +74,26 @@ func (o *OvsdbServer) Insert(database string, table string, rowUUID string, row 
 	dbModel := o.models[database]
 	o.modelsMutex.Unlock()
 
-	m := mapper.NewMapper(dbModel.Schema)
-	tSchema := dbModel.Schema.Table(table)
+	m := dbModel.Mapper()
 
 	if rowUUID == "" {
 		rowUUID = uuid.NewString()
 	}
 
-	model, err := dbModel.Model.NewModel(table)
+	model, err := dbModel.NewModel(table)
 	if err != nil {
 		return ovsdb.OperationResult{
 			Error: err.Error(),
 		}, nil
 	}
 
-	err = m.GetRowData(table, &row, model)
+	mapperInfo, err := dbModel.NewModelInfo(model)
+	if err != nil {
+		return ovsdb.OperationResult{
+			Error: err.Error(),
+		}, nil
+	}
+	err = m.GetRowData(&row, mapperInfo)
 	if err != nil {
 		return ovsdb.OperationResult{
 			Error: err.Error(),
@@ -97,12 +101,6 @@ func (o *OvsdbServer) Insert(database string, table string, rowUUID string, row 
 	}
 
 	if rowUUID != "" {
-		mapperInfo, err := mapper.NewInfo(tSchema, model)
-		if err != nil {
-			return ovsdb.OperationResult{
-				Error: err.Error(),
-			}, nil
-		}
 		if err := mapperInfo.SetField("_uuid", rowUUID); err != nil {
 			return ovsdb.OperationResult{
 				Error: err.Error(),
@@ -110,7 +108,7 @@ func (o *OvsdbServer) Insert(database string, table string, rowUUID string, row 
 		}
 	}
 
-	resultRow, err := m.NewRow(table, model)
+	resultRow, err := m.NewRow(mapperInfo)
 	if err != nil {
 		return ovsdb.OperationResult{
 			Error: err.Error(),
@@ -134,11 +132,12 @@ func (o *OvsdbServer) Insert(database string, table string, rowUUID string, row 
 	result := ovsdb.OperationResult{
 		UUID: ovsdb.UUID{GoUUID: rowUUID},
 	}
-	return result, ovsdb.TableUpdates{
+	return result, ovsdb.TableUpdates2{
 		table: {
 			rowUUID: {
-				New: &resultRow,
-				Old: nil,
+				Insert: &resultRow,
+				New:    &resultRow,
+				Old:    nil,
 			},
 		},
 	}
@@ -154,7 +153,7 @@ func (o *OvsdbServer) Select(database string, table string, where []ovsdb.Condit
 	dbModel := o.models[database]
 	o.modelsMutex.Unlock()
 
-	m := mapper.NewMapper(dbModel.Schema)
+	m := dbModel.Mapper()
 
 	var results []ovsdb.Row
 	rows, err := o.db.List(database, table, where...)
@@ -162,7 +161,11 @@ func (o *OvsdbServer) Select(database string, table string, where []ovsdb.Condit
 		panic(err)
 	}
 	for _, row := range rows {
-		resultRow, err := m.NewRow(table, row)
+		info, err := dbModel.NewModelInfo(row)
+		if err != nil {
+			panic(err)
+		}
+		resultRow, err := m.NewRow(info)
 		if err != nil {
 			panic(err)
 		}
@@ -173,7 +176,7 @@ func (o *OvsdbServer) Select(database string, table string, where []ovsdb.Condit
 	}
 }
 
-func (o *OvsdbServer) Update(database, table string, where []ovsdb.Condition, row ovsdb.Row) (ovsdb.OperationResult, ovsdb.TableUpdates) {
+func (o *OvsdbServer) Update(database, table string, where []ovsdb.Condition, row ovsdb.Row) (ovsdb.OperationResult, ovsdb.TableUpdates2) {
 	if !o.db.Exists(database) {
 		return ovsdb.OperationResult{
 			Error: "database does not exist",
@@ -183,9 +186,9 @@ func (o *OvsdbServer) Update(database, table string, where []ovsdb.Condition, ro
 	dbModel := o.models[database]
 	o.modelsMutex.Unlock()
 
-	m := mapper.NewMapper(dbModel.Schema)
-	schema := dbModel.Schema.Table(table)
-	tableUpdate := make(ovsdb.TableUpdate)
+	m := dbModel.Mapper()
+	schema := dbModel.Schema().Table(table)
+	tableUpdate := make(ovsdb.TableUpdate2)
 	rows, err := o.db.List(database, table, where...)
 	if err != nil {
 		return ovsdb.OperationResult{
@@ -193,30 +196,31 @@ func (o *OvsdbServer) Update(database, table string, where []ovsdb.Condition, ro
 		}, nil
 	}
 	for _, old := range rows {
-		info, _ := mapper.NewInfo(schema, old)
-		uuid, _ := info.FieldByColumn("_uuid")
+		oldInfo, _ := dbModel.NewModelInfo(old)
+		uuid, _ := oldInfo.FieldByColumn("_uuid")
 
-		oldRow, err := m.NewRow(table, old)
+		oldRow, err := m.NewRow(oldInfo)
 		if err != nil {
 			panic(err)
 		}
-		new, err := dbModel.Model.NewModel(table)
+		new, err := dbModel.NewModel(table)
 		if err != nil {
 			panic(err)
 		}
-		err = m.GetRowData(table, &oldRow, new)
+		newInfo, err := dbModel.NewModelInfo(new)
 		if err != nil {
 			panic(err)
 		}
-		info, err = mapper.NewInfo(schema, new)
+		err = m.GetRowData(&oldRow, newInfo)
 		if err != nil {
 			panic(err)
 		}
-		err = info.SetField("_uuid", uuid)
+		err = newInfo.SetField("_uuid", uuid)
 		if err != nil {
 			panic(err)
 		}
 
+		rowDelta := ovsdb.NewRow()
 		for column, value := range row {
 			colSchema := schema.Column(column)
 			if colSchema == nil {
@@ -233,17 +237,42 @@ func (o *OvsdbServer) Update(database, table string, where []ovsdb.Condition, ro
 					Details: fmt.Sprintf("column %s is of table %s not mutable", column, table),
 				}, nil
 			}
+			old, err := newInfo.FieldByColumn(column)
+			if err != nil {
+				panic(err)
+			}
+
+			oldValue, err := ovsdb.NativeToOvs(colSchema, old)
+			if err != nil {
+				oldValue = nil
+			}
+
 			native, err := ovsdb.OvsToNative(colSchema, value)
 			if err != nil {
 				panic(err)
 			}
-			err = info.SetField(column, native)
+
+			if oldValue == native {
+				continue
+			}
+
+			err = newInfo.SetField(column, native)
 			if err != nil {
 				panic(err)
 			}
+			// convert the native to an ovs value
+			// since the value in the RowUpdate hasn't been normalized
+			newValue, err := ovsdb.NativeToOvs(colSchema, native)
+			if err != nil {
+				panic(err)
+			}
+			diff := diff(oldValue, newValue)
+			if diff != nil {
+				rowDelta[column] = diff
+			}
 		}
 
-		newRow, err := m.NewRow(table, new)
+		newRow, err := m.NewRow(newInfo)
 		if err != nil {
 			panic(err)
 		}
@@ -262,20 +291,21 @@ func (o *OvsdbServer) Update(database, table string, where []ovsdb.Condition, ro
 			}, nil
 		}
 
-		tableUpdate.AddRowUpdate(uuid.(string), &ovsdb.RowUpdate{
-			Old: &oldRow,
-			New: &newRow,
+		tableUpdate.AddRowUpdate(uuid.(string), &ovsdb.RowUpdate2{
+			Modify: &rowDelta,
+			Old:    &oldRow,
+			New:    &newRow,
 		})
 	}
 	// FIXME: We need to filter the returned columns
 	return ovsdb.OperationResult{
 			Count: len(rows),
-		}, ovsdb.TableUpdates{
+		}, ovsdb.TableUpdates2{
 			table: tableUpdate,
 		}
 }
 
-func (o *OvsdbServer) Mutate(database, table string, where []ovsdb.Condition, mutations []ovsdb.Mutation) (ovsdb.OperationResult, ovsdb.TableUpdates) {
+func (o *OvsdbServer) Mutate(database, table string, where []ovsdb.Condition, mutations []ovsdb.Mutation) (ovsdb.OperationResult, ovsdb.TableUpdates2) {
 	if !o.db.Exists(database) {
 		return ovsdb.OperationResult{
 			Error: "database does not exist",
@@ -285,10 +315,10 @@ func (o *OvsdbServer) Mutate(database, table string, where []ovsdb.Condition, mu
 	dbModel := o.models[database]
 	o.modelsMutex.Unlock()
 
-	m := mapper.NewMapper(dbModel.Schema)
-	schema := dbModel.Schema.Table(table)
+	m := dbModel.Mapper()
+	schema := dbModel.Schema().Table(table)
 
-	tableUpdate := make(ovsdb.TableUpdate)
+	tableUpdate := make(ovsdb.TableUpdate2)
 
 	rows, err := o.db.List(database, table, where...)
 	if err != nil {
@@ -296,32 +326,36 @@ func (o *OvsdbServer) Mutate(database, table string, where []ovsdb.Condition, mu
 	}
 
 	for _, old := range rows {
-		info, err := mapper.NewInfo(schema, old)
+		oldInfo, err := dbModel.NewModelInfo(old)
 		if err != nil {
 			panic(err)
 		}
-		uuid, _ := info.FieldByColumn("_uuid")
-		oldRow, err := m.NewRow(table, old)
+		uuid, _ := oldInfo.FieldByColumn("_uuid")
+		oldRow, err := m.NewRow(oldInfo)
 		if err != nil {
 			panic(err)
 		}
-		new, err := dbModel.Model.NewModel(table)
+		new, err := dbModel.NewModel(table)
 		if err != nil {
 			panic(err)
 		}
-		err = m.GetRowData(table, &oldRow, new)
+		newInfo, err := dbModel.NewModelInfo(new)
 		if err != nil {
 			panic(err)
 		}
-		info, err = mapper.NewInfo(schema, new)
+		err = m.GetRowData(&oldRow, newInfo)
 		if err != nil {
 			panic(err)
 		}
-		err = info.SetField("_uuid", uuid)
+		err = newInfo.SetField("_uuid", uuid)
 		if err != nil {
 			panic(err)
 		}
+
+		rowDelta := ovsdb.NewRow()
+		mutateCols := make(map[string]struct{})
 		for _, mutation := range mutations {
+			mutateCols[mutation.Column] = struct{}{}
 			column := schema.Column(mutation.Column)
 			var nativeValue interface{}
 			// Usually a mutation value is of the same type of the value being mutated
@@ -341,45 +375,77 @@ func (o *OvsdbServer) Mutate(database, table string, where []ovsdb.Condition, mu
 			if err := ovsdb.ValidateMutation(column, mutation.Mutator, nativeValue); err != nil {
 				panic(err)
 			}
-			current, err := info.FieldByColumn(mutation.Column)
+			current, err := newInfo.FieldByColumn(mutation.Column)
 			if err != nil {
 				panic(err)
 			}
-			newValue := mutate(current, mutation.Mutator, nativeValue)
-			if err := info.SetField(mutation.Column, newValue); err != nil {
+			newValue, _ := mutate(current, mutation.Mutator, nativeValue)
+			if err := newInfo.SetField(mutation.Column, newValue); err != nil {
 				panic(err)
 			}
-			newRow, err := m.NewRow(table, new)
+		}
+		for changed := range mutateCols {
+			colSchema := schema.Column(changed)
+			oldValueNative, err := oldInfo.FieldByColumn(changed)
 			if err != nil {
 				panic(err)
 			}
-			// check indexes
-			if err := o.db.CheckIndexes(database, table, new); err != nil {
-				if indexExists, ok := err.(*cache.ErrIndexExists); ok {
-					e := ovsdb.ConstraintViolation{}
-					return ovsdb.OperationResult{
-						Error:   e.Error(),
-						Details: newIndexExistsDetails(*indexExists),
-					}, nil
-				}
+
+			newValueNative, err := newInfo.FieldByColumn(changed)
+			if err != nil {
+				panic(err)
+			}
+
+			oldValue, err := ovsdb.NativeToOvs(colSchema, oldValueNative)
+			if err != nil {
+				panic(err)
+			}
+
+			newValue, err := ovsdb.NativeToOvs(colSchema, newValueNative)
+			if err != nil {
+				panic(err)
+			}
+
+			delta := diff(oldValue, newValue)
+			if delta != nil {
+				rowDelta[changed] = delta
+			}
+		}
+
+		// check indexes
+		if err := o.db.CheckIndexes(database, table, new); err != nil {
+			if indexExists, ok := err.(*cache.ErrIndexExists); ok {
+				e := ovsdb.ConstraintViolation{}
 				return ovsdb.OperationResult{
-					Error: err.Error(),
+					Error:   e.Error(),
+					Details: newIndexExistsDetails(*indexExists),
 				}, nil
 			}
-			tableUpdate.AddRowUpdate(uuid.(string), &ovsdb.RowUpdate{
-				Old: &oldRow,
-				New: &newRow,
-			})
+			return ovsdb.OperationResult{
+				Error: err.Error(),
+			}, nil
 		}
+
+		newRow, err := m.NewRow(newInfo)
+		if err != nil {
+			panic(err)
+		}
+
+		tableUpdate.AddRowUpdate(uuid.(string), &ovsdb.RowUpdate2{
+			Modify: &rowDelta,
+			Old:    &oldRow,
+			New:    &newRow,
+		})
 	}
+
 	return ovsdb.OperationResult{
 			Count: len(rows),
-		}, ovsdb.TableUpdates{
+		}, ovsdb.TableUpdates2{
 			table: tableUpdate,
 		}
 }
 
-func (o *OvsdbServer) Delete(database, table string, where []ovsdb.Condition) (ovsdb.OperationResult, ovsdb.TableUpdates) {
+func (o *OvsdbServer) Delete(database, table string, where []ovsdb.Condition) (ovsdb.OperationResult, ovsdb.TableUpdates2) {
 	if !o.db.Exists(database) {
 		return ovsdb.OperationResult{
 			Error: "database does not exist",
@@ -388,28 +454,28 @@ func (o *OvsdbServer) Delete(database, table string, where []ovsdb.Condition) (o
 	o.modelsMutex.Lock()
 	dbModel := o.models[database]
 	o.modelsMutex.Unlock()
-	m := mapper.NewMapper(dbModel.Schema)
-	schema := dbModel.Schema.Table(table)
-	tableUpdate := make(ovsdb.TableUpdate)
+	m := dbModel.Mapper()
+
+	tableUpdate := make(ovsdb.TableUpdate2)
 	rows, err := o.db.List(database, table, where...)
 	if err != nil {
 		panic(err)
 	}
 	for _, row := range rows {
-		info, _ := mapper.NewInfo(schema, row)
+		info, _ := dbModel.NewModelInfo(row)
 		uuid, _ := info.FieldByColumn("_uuid")
-		oldRow, err := m.NewRow(table, row)
+		oldRow, err := m.NewRow(info)
 		if err != nil {
 			panic(err)
 		}
-		tableUpdate.AddRowUpdate(uuid.(string), &ovsdb.RowUpdate{
-			Old: &oldRow,
-			New: nil,
+		tableUpdate.AddRowUpdate(uuid.(string), &ovsdb.RowUpdate2{
+			Delete: &ovsdb.Row{},
+			Old:    &oldRow,
 		})
 	}
 	return ovsdb.OperationResult{
 			Count: len(rows),
-		}, ovsdb.TableUpdates{
+		}, ovsdb.TableUpdates2{
 			table: tableUpdate,
 		}
 }
@@ -437,4 +503,78 @@ func (o *OvsdbServer) Comment(database, table string, comment string) ovsdb.Oper
 func (o *OvsdbServer) Assert(database, table, lock string) ovsdb.OperationResult {
 	e := ovsdb.NotSupported{}
 	return ovsdb.OperationResult{Error: e.Error()}
+}
+
+func diff(a interface{}, b interface{}) interface{} {
+	switch a.(type) {
+	case ovsdb.OvsSet:
+		// original value
+		original := a.(ovsdb.OvsSet)
+		// replacement value
+		replacement := b.(ovsdb.OvsSet)
+		var c []interface{}
+		for _, originalElem := range original.GoSet {
+			found := false
+			for _, replacementElem := range replacement.GoSet {
+				if originalElem == replacementElem {
+					found = true
+					break
+				}
+			}
+			if !found {
+				// remove from client
+				c = append(c, originalElem)
+			}
+		}
+		for _, replacementElem := range replacement.GoSet {
+			found := false
+			for _, originalElem := range original.GoSet {
+				if replacementElem == originalElem {
+					found = true
+					break
+				}
+			}
+			if !found {
+				// add to client
+				c = append(c, replacementElem)
+			}
+		}
+		if len(c) > 0 {
+			cSet, _ := ovsdb.NewOvsSet(c)
+			return cSet
+		}
+		return nil
+	case ovsdb.OvsMap:
+		originalMap := a.(ovsdb.OvsMap)
+		replacementMap := b.(ovsdb.OvsMap)
+		c := make(map[interface{}]interface{})
+		for k, v := range originalMap.GoMap {
+			// if key exists in replacement map
+			if _, ok := replacementMap.GoMap[k]; ok {
+				// and values are not equal
+				if originalMap.GoMap[k] != replacementMap.GoMap[k] {
+					// add to diff
+					c[k] = replacementMap.GoMap[k]
+				}
+			} else {
+				// if key does not exist in replacement map
+				// add old value so it's deleted by client
+				c[k] = v
+			}
+		}
+		for k, v := range replacementMap.GoMap {
+			// if key does not exist in original map
+			if _, ok := originalMap.GoMap[k]; !ok {
+				// add old value so it's added by client
+				c[k] = v
+			}
+		}
+		if len(c) > 0 {
+			cMap, _ := ovsdb.NewOvsMap(c)
+			return cMap
+		}
+		return nil
+	default:
+		return b
+	}
 }

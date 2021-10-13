@@ -2,42 +2,48 @@ package mapper
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 
 	"github.com/ovn-org/libovsdb/ovsdb"
 )
 
-// Info is a struct that handles the type map of an object
-// The object must have exported tagged fields with the 'ovs'
+// Info is a struct that wraps an object with its metadata
 type Info struct {
 	// FieldName indexed by column
-	fields map[string]string
-	obj    interface{}
-	table  *ovsdb.TableSchema
+	Obj      interface{}
+	Metadata *Metadata
+}
+
+// Metadata represents the information needed to know how to map OVSDB columns into an objet's fields
+type Metadata struct {
+	Fields      map[string]string  // Map of ColumnName -> FieldName
+	TableSchema *ovsdb.TableSchema // TableSchema associated
+	TableName   string             // Table name
 }
 
 // FieldByColumn returns the field value that corresponds to a column
 func (i *Info) FieldByColumn(column string) (interface{}, error) {
-	fieldName, ok := i.fields[column]
+	fieldName, ok := i.Metadata.Fields[column]
 	if !ok {
-		return nil, fmt.Errorf("column %s not found in orm info", column)
+		return nil, fmt.Errorf("FieldByColumn: column %s not found in mapper info", column)
 	}
-	return reflect.ValueOf(i.obj).Elem().FieldByName(fieldName).Interface(), nil
+	return reflect.ValueOf(i.Obj).Elem().FieldByName(fieldName).Interface(), nil
 }
 
-// FieldByColumn returns the field value that corresponds to a column
-func (i *Info) hasColumn(column string) bool {
-	_, ok := i.fields[column]
+// HasColumn returns whether the column exists in the Metadata fields
+func (i *Info) HasColumn(column string) bool {
+	_, ok := i.Metadata.Fields[column]
 	return ok
 }
 
 // SetField sets the field in the column to the specified value
 func (i *Info) SetField(column string, value interface{}) error {
-	fieldName, ok := i.fields[column]
+	fieldName, ok := i.Metadata.Fields[column]
 	if !ok {
-		return fmt.Errorf("column %s not found in orm info", column)
+		return fmt.Errorf("SetField: column %s not found in mapper info", column)
 	}
-	fieldValue := reflect.ValueOf(i.obj).Elem().FieldByName(fieldName)
+	fieldValue := reflect.ValueOf(i.Obj).Elem().FieldByName(fieldName)
 
 	if !fieldValue.Type().AssignableTo(reflect.TypeOf(value)) {
 		return fmt.Errorf("column %s: native value %v (%s) is not assignable to field %s (%s)",
@@ -53,18 +59,18 @@ func (i *Info) ColumnByPtr(fieldPtr interface{}) (string, error) {
 	if fieldPtrVal.Kind() != reflect.Ptr {
 		return "", ovsdb.NewErrWrongType("ColumnByPointer", "pointer to a field in the struct", fieldPtr)
 	}
-	offset := fieldPtrVal.Pointer() - reflect.ValueOf(i.obj).Pointer()
-	objType := reflect.TypeOf(i.obj).Elem()
+	offset := fieldPtrVal.Pointer() - reflect.ValueOf(i.Obj).Pointer()
+	objType := reflect.TypeOf(i.Obj).Elem()
 	for j := 0; j < objType.NumField(); j++ {
 		if objType.Field(j).Offset == offset {
 			column := objType.Field(j).Tag.Get("ovsdb")
-			if _, ok := i.fields[column]; !ok {
-				return "", fmt.Errorf("field does not have orm column information")
+			if _, ok := i.Metadata.Fields[column]; !ok {
+				return "", fmt.Errorf("field does not have mapper column information")
 			}
 			return column, nil
 		}
 	}
-	return "", fmt.Errorf("field pointer does not correspond to orm struct")
+	return "", fmt.Errorf("field pointer does not correspond to mapper struct")
 }
 
 // getValidIndexes inspects the object and returns the a list of indexes (set of columns) for witch
@@ -74,16 +80,16 @@ func (i *Info) getValidIndexes() ([][]string, error) {
 	var possibleIndexes [][]string
 
 	possibleIndexes = append(possibleIndexes, []string{"_uuid"})
-	possibleIndexes = append(possibleIndexes, i.table.Indexes...)
+	possibleIndexes = append(possibleIndexes, i.Metadata.TableSchema.Indexes...)
 
 	// Iterate through indexes and validate them
 OUTER:
 	for _, idx := range possibleIndexes {
 		for _, col := range idx {
-			if !i.hasColumn(col) {
+			if !i.HasColumn(col) {
 				continue OUTER
 			}
-			columnSchema := i.table.Column(col)
+			columnSchema := i.Metadata.TableSchema.Column(col)
 			if columnSchema == nil {
 				continue OUTER
 			}
@@ -101,7 +107,7 @@ OUTER:
 }
 
 // NewInfo creates a MapperInfo structure around an object based on a given table schema
-func NewInfo(table *ovsdb.TableSchema, obj interface{}) (*Info, error) {
+func NewInfo(tableName string, table *ovsdb.TableSchema, obj interface{}, compat bool) (*Info, error) {
 	objPtrVal := reflect.ValueOf(obj)
 	if objPtrVal.Type().Kind() != reflect.Ptr {
 		return nil, ovsdb.NewErrWrongType("NewMapperInfo", "pointer to a struct", obj)
@@ -122,32 +128,45 @@ func NewInfo(table *ovsdb.TableSchema, obj interface{}) (*Info, error) {
 		}
 		column := table.Column(colName)
 		if column == nil {
-			return nil, &ErrMapper{
+			err := &ErrMapper{
 				objType:   objType.String(),
 				field:     field.Name,
 				fieldType: field.Type.String(),
 				fieldTag:  colName,
 				reason:    "Column does not exist in schema",
 			}
+			if compat {
+				log.Printf("Warning: %s. Skipping", err.Error())
+				continue
+			}
+			return nil, err
 		}
 
 		// Perform schema-based type checking
 		expType := ovsdb.NativeType(column)
 		if expType != field.Type {
-			return nil, &ErrMapper{
+			err := &ErrMapper{
 				objType:   objType.String(),
 				field:     field.Name,
 				fieldType: field.Type.String(),
 				fieldTag:  colName,
 				reason:    fmt.Sprintf("Wrong type, column expects %s", expType),
 			}
+			if compat {
+				log.Printf("Warning: %s. Skipping", err.Error())
+				continue
+			}
+			return nil, err
 		}
 		fields[colName] = field.Name
 	}
 
 	return &Info{
-		fields: fields,
-		obj:    obj,
-		table:  table,
+		Obj: obj,
+		Metadata: &Metadata{
+			Fields:      fields,
+			TableSchema: table,
+			TableName:   tableName,
+		},
 	}, nil
 }
