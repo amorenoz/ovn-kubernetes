@@ -341,8 +341,20 @@ func (pr *PodRequest) ConfigureInterface(podLister corev1listers.PodLister, kcli
 			return nil, fmt.Errorf("unexpected configuration, pod request on smart-nic host. " +
 				"device ID must be provided")
 		}
-		// General case
-		hostIface, contIface, err = setupInterface(netns, pr.SandboxID, pr.IfName, ifInfo)
+		sfPF := pr.CNIConf.SubFunctionPF
+		if sfPF == "" && pr.CNIConf.RuntimeConfig.DeviceID != "" {
+			klog.Info("Using SubFunction PF from RuntimeConfig.DeviceID")
+			sfPF = pr.CNIConf.RuntimeConfig.DeviceID
+		}
+
+		if sfPF != "" {
+			klog.Infof("Special configuration! Doing the subfunction hack! Will use PF: %s", sfPF)
+			// For now, fall back to do the same thing
+			hostIface, contIface, err = setupInterface(netns, pr.SandboxID, pr.IfName, ifInfo)
+		} else {
+			// General case
+			hostIface, contIface, err = setupInterface(netns, pr.SandboxID, pr.IfName, ifInfo)
+		}
 	}
 	if err != nil {
 		return nil, err

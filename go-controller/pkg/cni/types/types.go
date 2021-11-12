@@ -10,6 +10,8 @@ type NetConf struct {
 	types.NetConf
 	// PciAddrs in case of using sriov
 	DeviceID string `json:"deviceID,omitempty"`
+	// PCIAddress of the PF to create subfunctions on
+	SubFunctionPF string `json:"subfunctionPF,omitempty"`
 	// LogFile to log all the messages from cni shim binary to
 	LogFile string `json:"logFile,omitempty"`
 	// Level is the logging verbosity level
@@ -23,6 +25,15 @@ type NetConf struct {
 	// LogFileMaxAge represents the maximum number
 	// of days to retain old log files
 	LogFileMaxAge int `json:"logfile-maxage"`
+	// RuntimeConfig
+	RuntimeConfig struct {
+		// HACK: Using DeviceID for runtime override of SubFunctionPF
+		// TODO: Add a new well-known capability in
+		// https://github.com/containernetworking/cni/blob/master/CONVENTIONS.md
+		DeviceID string `json:"deviceID,omitempty"`
+		// Path to the CNIDeviceInfoFile (TODO)
+		CNIDeviceFile string `json:"CNIDeviceFile,omitempty"`
+	} `json:"runtimeConfig,omitempty"`
 }
 
 // NetworkSelectionElement represents one element of the JSON format
