@@ -42,7 +42,7 @@ RUN git clone $OVS_REPO --single-branch --branch=$OVS_BRANCH
 WORKDIR /root/ovs
 RUN ./boot.sh
 RUN ./configure
-RUN make rpm-fedora
+RUN make -j rpm-fedora
 RUN rm rpm/rpmbuild/RPMS/x86_64/*debug*
 RUN rm rpm/rpmbuild/RPMS/x86_64/*devel*
 RUN git log -n 1
@@ -57,7 +57,7 @@ RUN git clone $OVN_REPO --single-branch --branch=$OVN_BRANCH
 WORKDIR /root/ovn/
 RUN ./boot.sh
 RUN ./configure --with-ovs-source=/root/ovs/
-RUN make rpm-fedora
+RUN make -j rpm-fedora
 RUN rm rpm/rpmbuild/RPMS/x86_64/*debug*
 RUN rm rpm/rpmbuild/RPMS/x86_64/*docker*
 RUN git log -n 1
