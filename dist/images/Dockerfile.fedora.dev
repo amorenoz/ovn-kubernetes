@@ -32,8 +32,8 @@ ENV PYTHONDONTWRITEBYTECODE yes
 ARG KERNEL_VERSION
 ARG OVN_REPO=https://github.com/ovn-org/ovn.git
 ARG OVN_BRANCH=main
-ARG OVS_REPO=https://github.com/openvswitch/ovs.git
-ARG OVS_BRANCH=master
+ARG OVS_REPO=https://github.com/amorenoz/ovs.git
+ARG OVS_BRANCH=ipfix
 
 #Install tools that is required for building ovs/ovn
 
@@ -41,7 +41,6 @@ RUN dnf upgrade -y && dnf install --best --refresh -y --setopt=tsflags=nodocs \
 	python3-pyyaml bind-utils procps-ng openssl numactl-libs firewalld-filesystem \
         libpcap hostname kubernetes-client python3-openvswitch python3-pyOpenSSL  \
         iptables iproute iputils strace socat\
-        "kernel-devel-uname-r == $KERNEL_VERSION" \
 	@'Development Tools' rpm-build dnf-plugins-core kmod && \
 	dnf clean all && rm -rf /var/cache/dnf/*
 
@@ -59,8 +58,8 @@ RUN rm -f /tmp/ovs.spec
 #Build OVS binaries and install
 RUN echo "Building OVS with kernel version : " $KERNEL_VERSION
 RUN ./boot.sh
-RUN ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --enable-ssl --with-linux=/usr/src/kernels/$KERNEL_VERSION/
-RUN make && make install
+RUN ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --enable-ssl
+RUN make -j && make install
 RUN ovs-vsctl --version && ovs-ofctl --version
 
 #Clone OVN Source Code
@@ -72,7 +71,7 @@ WORKDIR /root/ovn/
 RUN git fetch && git checkout $OVN_BRANCH && git log -n 1
 RUN ./boot.sh
 RUN ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc --with-ovs-source=/root/ovs/
-RUN make && make install
+RUN make -j && make install
 RUN ovn-nbctl --version && ovn-sbctl --version
 
 RUN mkdir -p /var/run/openvswitch && \

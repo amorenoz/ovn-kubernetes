@@ -18,7 +18,7 @@ ifeq ($(ARCH),arm64)
         DOCKERFILE_ARCH=.arm64
 endif
 KERNEL_VERSION ?= `uname -r`
-OVS_BRANCH ?= master
+OVS_BRANCH ?= ipfix
 OVN_BRANCH ?= main
 OCI_BIN ?= docker
 
@@ -51,7 +51,7 @@ fedora-dev: bld
 	# To build (OVN Datapath)  with specific kernel version, please override KERNEL_VERSION.
 	# By default it will build with the host machine's kernel version.
 
-	${OCI_BIN} build --build-arg KERNEL_VERSION=$(KERNEL_VERSION) \
+	${OCI_BIN} build --no-cache --build-arg KERNEL_VERSION=$(KERNEL_VERSION) \
 		     --build-arg OVS_BRANCH=$(OVS_BRANCH) \
 		     --build-arg OVN_BRANCH=$(OVN_BRANCH) \
 		     -t ovn-kube-f-dev -f Dockerfile.fedora.dev .
