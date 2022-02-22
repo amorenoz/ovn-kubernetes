@@ -30,10 +30,10 @@ USER root
 ENV PYTHONDONTWRITEBYTECODE yes
 
 ARG KERNEL_VERSION
-ARG OVN_REPO=https://github.com/ovn-org/ovn.git
-ARG OVN_BRANCH=main
+ARG OVN_REPO=https://github.com/amorenoz/ovn.git
+ARG OVN_BRANCH=debug-mode
 ARG OVS_REPO=https://github.com/amorenoz/ovs.git
-ARG OVS_BRANCH=ipfix
+ARG OVS_BRANCH=ovn-ipfix
 
 #Install tools that is required for building ovs/ovn
 

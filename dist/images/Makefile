@@ -18,8 +18,8 @@ ifeq ($(ARCH),arm64)
         DOCKERFILE_ARCH=.arm64
 endif
 KERNEL_VERSION ?= `uname -r`
-OVS_BRANCH ?= ipfix
-OVN_BRANCH ?= main
+OVS_BRANCH ?= ovn-ipfix
+OVN_BRANCH ?= debug-mode
 OCI_BIN ?= docker
 
 # The image of ovnkube/ovn-daemonset-u should be multi-arched before using it on arm64
