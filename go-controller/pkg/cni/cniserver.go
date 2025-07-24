@@ -23,7 +23,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // *** The Server is PRIVATE API between OVN components and may be
@@ -189,19 +188,9 @@ func cniRequestToPodRequest(cr *Request) (*PodRequest, error) {
 		req.nadName = conf.NADName
 	}
 
-	if conf.DeviceID != "" {
-		if util.IsPCIDeviceName(conf.DeviceID) {
-			// DeviceID is a PCI address
-			req.IsVFIO = util.GetSriovnetOps().IsVfPciVfioBound(conf.DeviceID)
-		} else if util.IsAuxDeviceName(conf.DeviceID) {
-			// DeviceID is an Auxiliary device name - <driver_name>.<kind_of_a_type>.<id>
-			chunks := strings.Split(conf.DeviceID, ".")
-			if chunks[1] != "sf" {
-				return nil, fmt.Errorf("only SF auxiliary devices are supported")
-			}
-		} else {
-			return nil, fmt.Errorf("expected PCI or Auxiliary device name, got - %s", conf.DeviceID)
-		}
+	req.DeviceType, err = GetDeviceType(conf.DeviceID)
+	if err != nil {
+		return nil, err
 	}
 
 	req.CNIConf = conf

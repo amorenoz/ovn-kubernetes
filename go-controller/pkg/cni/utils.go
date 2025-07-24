@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/k8snetworkplumbingwg/govdpa/pkg/kvdpa"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -157,3 +160,67 @@ func IsStaticPod(pod *corev1.Pod) bool {
 }
 
 //END taken from https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/types/pod_update.go
+
+// Determine what's the type of the DeviceID.
+func GetDeviceType(deviceID string) (DeviceType, error) {
+	if deviceID == "" {
+		return DeviceTypeNone, nil
+	}
+	if util.IsPCIDeviceName(deviceID) {
+		if util.GetSriovnetOps().IsVfPciVfioBound(deviceID) {
+			return DeviceTypeVFIO, nil
+		}
+		vdpaDev, err := util.GetVdpaOps().GetVdpaDeviceByPci(deviceID)
+		if err == nil && vdpaDev != nil {
+			switch driver := vdpaDev.Driver(); driver {
+			case kvdpa.VirtioVdpaDriver:
+				return DeviceTypeVFVdpaVirtio, nil
+			case kvdpa.VhostVdpaDriver:
+				return DeviceTypeVFVdpaVhost, nil
+			default:
+				return DeviceTypeNotSupported, fmt.Errorf("%s: unsupported vdpa driver: %s", deviceID, driver)
+			}
+		}
+		return DeviceTypeVFNetdev, nil
+	}
+	// Check if DeviceID is an Auxiliary device name - <driver_name>.<kind_of_a_type>.<id>
+	chunks := strings.Split(deviceID, ".")
+	if len(chunks) > 1 && chunks[1] == "sf" {
+		// TODO: this is not very reliable: use DeviceInfo instead
+		return DeviceTypeSF, nil
+	}
+
+	return DeviceTypeNotSupported, fmt.Errorf("%s: deviceType not supported")
+}
+
+// GetNetdevNameFromDeviceId returns the netdevice name from the passed device ID.
+func GetNetdevNameFromDeviceId(deviceId string, deviceType DeviceType) (string, error) {
+	var netdevices []string
+	var err error
+
+	switch deviceType {
+	case DeviceTypeVFNetdev:
+		netdevices, err = util.GetSriovnetOps().GetNetDevicesFromPci(deviceId)
+	case DeviceTypeVFVdpaVirtio:
+		vdpaDevice, err := util.GetVdpaOps().GetVdpaDeviceByPci(deviceId)
+		if err != nil || vdpaDevice == nil || vdpaDevice.Driver() != kvdpa.VirtioVdpaDriver {
+			klog.Warningf("Error when searching for the virtio/vdpa netdev: %v", err)
+			return "", err
+		}
+		klog.V(2).Infof("deviceInfo.Vdpa.Driver is virtio, returning netdev %s", vdpaDevice.VirtioNet().NetDev())
+		netdevices = []string{vdpaDevice.VirtioNet().NetDev()}
+	case DeviceTypeSF:
+		netdevices, err = util.GetSriovnetOps().GetNetDevicesFromAux(deviceId)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	// Make sure we have 1 netdevice per pci address
+	numNetDevices := len(netdevices)
+	if numNetDevices != 1 {
+		return "", fmt.Errorf("failed to get one netdevice interface (count %d) per Device ID %s", numNetDevices, deviceId)
+	}
+	return netdevices[0], nil
+}

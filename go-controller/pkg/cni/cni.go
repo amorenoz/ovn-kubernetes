@@ -133,9 +133,8 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
 		var err error
-
-		if !pr.IsVFIO {
-			netdevName, err = util.GetNetdevNameFromDeviceId(pr.CNIConf.DeviceID, pr.deviceInfo)
+		if pr.DeviceType.HasNetdev() {
+			netdevName, err = GetNetdevNameFromDeviceId(pr.CNIConf.DeviceID, pr.DeviceType)
 			if err != nil {
 				return nil, fmt.Errorf("failed in cmdAdd while getting Netdevice name: %w", err)
 			}
@@ -415,7 +414,7 @@ func (pr *PodRequest) buildPrimaryUDNPodRequest(
 			MTU: primaryUDN.MTU(),
 		},
 		timestamp:  time.Now(),
-		IsVFIO:     pr.IsVFIO,
+		DeviceType: pr.DeviceType,
 		netName:    primaryUDN.NetworkName(),
 		nadName:    primaryUDN.NADName(),
 		deviceInfo: v1.DeviceInfo{},
@@ -457,4 +456,13 @@ func checkBridgeMapping(ovsClient client.Client, topology string, networkName st
 	}
 	klog.V(5).Infof("Failed to find bridge mapping for network: %q, current OVN bridge-mappings: (%s)", networkName, ovnBridgeMappings)
 	return fmt.Errorf("failed to find OVN bridge-mapping for network: %q", networkName)
+}
+
+func (t DeviceType) HasNetdev() bool {
+	switch t {
+	case DeviceTypeVFNetdev, DeviceTypeSF, DeviceTypeVFVdpaVirtio:
+		return true
+	default:
+		return false
+	}
 }

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ip"
-	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -582,7 +581,11 @@ func handleNetdevResources(resourceName string) (string, error) {
 	} else {
 		return "", fmt.Errorf("insufficient device IDs for resource: %s", resourceName)
 	}
-	netdevice, err := util.GetNetdevNameFromDeviceId(deviceId, v1.DeviceInfo{})
+	deviceType, err := cni.GetDeviceType(deviceId)
+	if err != nil {
+		return "", err
+	}
+	netdevice, err := cni.GetNetdevNameFromDeviceId(deviceId, deviceType)
 	if err != nil {
 		return "", err
 	}

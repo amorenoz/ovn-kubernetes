@@ -130,6 +130,18 @@ func (response *Response) MarshalForLogging() ([]byte, error) {
 	return noAuthJSON, nil
 }
 
+type DeviceType int
+
+const (
+	DeviceTypeNone         DeviceType = iota // No device is provided
+	DeviceTypeVFIO                           // VF with VFIO driver
+	DeviceTypeVFNetdev                       // VF with netdev driver
+	DeviceTypeVFVdpaVirtio                   // VF with virtio_vdpa driver
+	DeviceTypeVFVdpaVhost                    // VF with vhost_vdpa driver
+	DeviceTypeSF                             // Auxiliary device: Subfunctions
+	DeviceTypeNotSupported                   // Device is not supported DeviceType
+)
+
 // PodRequest structure built from Request which is passed to the
 // handler function given to the Server at creation time
 type PodRequest struct {
@@ -155,8 +167,8 @@ type PodRequest struct {
 	ctx context.Context
 	// cancel should be called to cancel this request
 	cancel context.CancelFunc
-	// if CNIConf.DeviceID is present, then captures if the VF is of type VFIO or not
-	IsVFIO bool
+	// the type of device, derived from CNIConf.DeviceID and deviceInfo (if present).
+	DeviceType DeviceType
 
 	// network name, for default network, this will be types.DefaultNetworkName
 	netName string

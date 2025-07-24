@@ -22,8 +22,8 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/knftables"
 	kexec "k8s.io/utils/exec"
+	"sigs.k8s.io/knftables"
 
 	"github.com/k8snetworkplumbingwg/govdpa/pkg/kvdpa"
 
@@ -865,15 +865,11 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	var hostIfName string
 
 	klog.V(5).Infof("CNI Conf %v", pr.CNIConf)
-	if pr.CNIConf.DeviceID != "" {
-		// SR-IOV Case
-		if dpType != types.DatapathSystem {
-			return nil, fmt.Errorf("SR-IOV not supported with datapath type %v", dpType)
-		}
-
-		hostIface, contIface, err = setupSriovInterface(netns, pr.SandboxID, pr.IfName, ifInfo, pr.CNIConf.DeviceID, pr.IsVFIO)
-		hostIfName = hostIface.Name
-	} else {
+	// TODO amorenoz: Here we should only setupSriov if device type is SR-IOV
+	switch pr.DeviceType {
+	case DeviceTypeNotSupported:
+		return nil, fmt.Errorf("device type not supported: %s", pr.CNIConf.DeviceID)
+	case DeviceTypeNone:
 		if ifInfo.IsDPUHostMode {
 			return nil, fmt.Errorf("unexpected configuration, pod request on dpu host. " +
 				"device ID must be provided")
@@ -891,9 +887,17 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 			// TODO: Remove hack!
 			klog.Errorf("Creating vduse dev %s (pr.netName: %s, ifInfo.NetName: %s)", hostIfName, pr.netName, ifInfo.NetName)
 		}
-	}
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+	default:
+		// SR-IOV Case
+		if dpType != types.DatapathSystem {
+			return nil, fmt.Errorf("SR-IOV not supported with datapath type %v", dpType)
+		}
+
+		hostIface, contIface, err = setupSriovInterface(netns, pr.SandboxID, pr.IfName, ifInfo, pr.CNIConf.DeviceID, pr.DeviceType == DeviceTypeVFIO)
+		hostIfName = hostIface.Name
 	}
 
 	if !ifInfo.IsDPUHostMode {
@@ -938,7 +942,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 			break
 		}
 	}
-	if haveV6 && !pr.IsVFIO {
+	if haveV6 && pr.DeviceType.HasNetdev() {
 		err = netns.Do(func(_ ns.NetNS) error {
 			// deny IPv6 neighbor solicitations
 			dadSysctlIface := fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/dad_transmits", contIface.Name)
@@ -1001,7 +1005,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 			return nil
 		}
 		// nothing else to do in DPUHostMode for VFIO device
-		if pr.IsVFIO {
+		if pr.DeviceType == DeviceTypeVFIO {
 			return nil
 		}
 		// in the case of VF, we need to rename the container interface to VF name and move it to host
@@ -1011,7 +1015,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 	isSecondary := pr.netName != types.DefaultNetworkName
 
 	// nothing needs to be done for the VFIO case in the container namespace
-	if !pr.IsVFIO && (dpType != types.DatapathUserspace) {
+	if (pr.DeviceType != DeviceTypeVFIO) && (dpType != types.DatapathUserspace) {
 		netns, err := ns.GetNS(pr.Netns)
 		if err != nil {
 			return fmt.Errorf("failed to get container namespace %s: %v", podDesc, err)
