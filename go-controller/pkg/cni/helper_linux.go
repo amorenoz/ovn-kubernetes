@@ -26,7 +26,6 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/k8snetworkplumbingwg/govdpa/pkg/kvdpa"
-
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -283,11 +282,19 @@ func prepareVDUSEInterfaceName(containerID, netName string) (string, error) {
 	//return containerID[:(15-len(suffix))] + suffix, nil
 }
 
-func setupVDUSEInterface(netns ns.NetNS, containerID, ifName string, ifInfo *PodInterfaceInfo, hostIfaceName string) (*current.Interface, *current.Interface, error) {
+func setupVDUSEInterface(netns ns.NetNS, containerID, ifName string, ifInfo *PodInterfaceInfo, hostIfaceName string, deviceType DeviceType) (*current.Interface, *current.Interface, error) {
 	hostIface := &current.Interface{}
 	contIface := &current.Interface{}
 
 	hostIface.Name = hostIfaceName
+
+	if deviceType == DeviceTypeVDUSEVhost {
+		// For vhost-vdpa devices, we don't need to configure anything else.
+		contIface.Name = ifName
+		contIface.Mac = ifInfo.MAC.String()
+		contIface.Sandbox = netns.Path()
+		return hostIface, contIface, nil
+	}
 
 	// TODO: hostIface.Mac = ?
 
@@ -664,7 +671,7 @@ func getPfEncapIP(deviceID string) (string, error) {
 
 // ConfigureOVS performs OVS configurations in order to set up Pod networking
 func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
-	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, getter PodInfoGetter, isVDUSE bool, isDOCA bool) error {
+	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, getter PodInfoGetter, isVDUSE bool, isDOCA bool, deviceType DeviceType) error {
 
 	ifaceID := util.GetIfaceId(namespace, podName)
 	if ifInfo.NetName != types.DefaultNetworkName {
@@ -746,9 +753,17 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	}
 
 	if isVDUSE {
+		var vduseDevName string = ""
+		if deviceType == DeviceTypeVDUSEVhost {
+			// vhost_vdpa
+			vduseDevName = deviceID
+		} else {
+			// virtio_vdpa
+			vduseDevName = hostIfaceName
+		}
 		ovsArgs = append(ovsArgs,
 			"type=dpdkvhostuserclient",
-			fmt.Sprintf("options:vhost-server-path=/dev/vduse/%s", hostIfaceName))
+			fmt.Sprintf("options:vhost-server-path=/dev/vduse/%s", vduseDevName))
 	}
 
 	if isDOCA {
@@ -890,6 +905,9 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 		if err != nil {
 			return nil, err
 		}
+	case DeviceTypeVDUSEVhost:
+		hostIfName, err = prepareVDUSEInterfaceName(pr.SandboxID, ifInfo.NetName)
+		klog.Errorf("Creating vduse vhost dev %s (pr.netName: %s, ifInfo.NetName: %s)", hostIfName, pr.netName, ifInfo.NetName)
 	default:
 		// SR-IOV Case
 		if dpType != types.DatapathSystem {
@@ -901,9 +919,9 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	}
 
 	if !ifInfo.IsDPUHostMode {
-		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, hostIfName, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, getter, isVDUSE, isDOCA)
+		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, hostIfName, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, getter, isVDUSE, isDOCA, pr.DeviceType)
 		if err == nil && isVDUSE {
-			hostIface, contIface, err = setupVDUSEInterface(netns, pr.SandboxID, pr.IfName, ifInfo, hostIfName)
+			hostIface, contIface, err = setupVDUSEInterface(netns, pr.SandboxID, pr.IfName, ifInfo, hostIfName, pr.DeviceType)
 		}
 
 		if err == nil {
@@ -920,7 +938,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 		}
 
 		if err != nil {
-			pr.deletePort(hostIfName, pr.PodNamespace, pr.PodName, isVDUSE)
+			pr.deletePort(hostIfName, pr.PodNamespace, pr.PodName, pr.DeviceType, pr.CNIConf.DeviceID, isVDUSE)
 			return nil, err
 		}
 	}
@@ -1106,7 +1124,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		// hostIfName is not empty if using device ID, using VDUSE, a secondary network, or segmentation not enabled
 		// delete the port in traditional fashion
 		if hostIfName != "" {
-			pr.deletePort(hostIfName, pr.PodNamespace, pr.PodName, isVDUSE)
+			pr.deletePort(hostIfName, pr.PodNamespace, pr.PodName, pr.DeviceType, pr.CNIConf.DeviceID, isVDUSE)
 		} else {
 			// this is a primary interface deletion and segmentation is enabled, delete all ports
 			// delete happens in reverse order for attached networks, so this is the final deletion
@@ -1116,7 +1134,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 				klog.V(5).Infof("Removing multiple interfaces for primary network segmentation (%+v) %s: %s",
 					*pr, podDesc, strings.Join(portList, ","))
 			}
-			pr.deletePorts(portList, pr.PodNamespace, pr.PodName, isVDUSE)
+			pr.deletePorts(portList, pr.PodNamespace, pr.PodName, pr.DeviceType, pr.CNIConf.DeviceID, isVDUSE)
 		}
 		err = clearPodBandwidthForPorts(portList, pr.SandboxID)
 		if err != nil {
@@ -1154,13 +1172,26 @@ func (pr *PodRequest) deletePodConntrack() {
 	}
 }
 
-func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string, isVDUSE bool) {
+func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string, deviceType DeviceType, deviceID string, isVDUSE bool) {
 	podDesc := fmt.Sprintf("%s/%s", podNamespace, podName)
 
 	if isVDUSE {
-		err := kvdpa.DeleteVdpaDevice(ifaceName)
-		if err != nil {
-			klog.Warningf("failure while deleting vDPA device %s for pod %q: : %v", ifaceName, podDesc, err)
+		var vduseDevName string = ""
+		if deviceType == DeviceTypeVDUSEVhost {
+			// vhost_vdpa
+			vduseDevName = deviceID
+		} else {
+			// virtio_vdpa
+			vduseDevName = ifaceName
+
+			vdpaDev, err := util.GetVdpaOps().GetVduseVdpaDevice(vduseDevName)
+			if err != nil {
+				klog.Warningf("failure while retrieving vDPA device for VDUSE device %s for pod %q: : %v", vduseDevName, podDesc, err)
+				return
+			}
+			if err := kvdpa.DeleteVdpaDevice(vdpaDev.Name()); err != nil {
+				klog.Warningf("failure while deleting vDPA device %s for VDUSE device %s for pod %q: : %v", vdpaDev.Name(), vduseDevName, podDesc, err)
+			}
 		}
 	}
 
@@ -1181,9 +1212,9 @@ func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string, isVDUS
 	}
 }
 
-func (pr *PodRequest) deletePorts(ifaces []string, podNamespace, podName string, isVDUSE bool) {
+func (pr *PodRequest) deletePorts(ifaces []string, podNamespace, podName string, deviceType DeviceType, deviceID string, isVDUSE bool) {
 	for _, iface := range ifaces {
-		pr.deletePort(iface, podNamespace, podName, isVDUSE)
+		pr.deletePort(iface, podNamespace, podName, deviceType, deviceID, isVDUSE)
 	}
 }
 

@@ -190,7 +190,19 @@ func GetDeviceType(deviceID string) (DeviceType, error) {
 		return DeviceTypeSF, nil
 	}
 
-	return DeviceTypeNotSupported, fmt.Errorf("%s: deviceType not supported")
+	vdpaDev, err := util.GetVdpaOps().GetVduseVdpaDevice(deviceID)
+	if vdpaDev != nil && err == nil {
+		switch driver := vdpaDev.Driver(); driver {
+		case kvdpa.VirtioVdpaDriver:
+			return DeviceTypeNotSupported, fmt.Errorf("%s: vduse virtio devices are not supported")
+		case kvdpa.VhostVdpaDriver:
+			return DeviceTypeVDUSEVhost, nil
+		default:
+			return DeviceTypeNotSupported, fmt.Errorf("%s: unsupported vdpa driver: %s", deviceID, driver)
+		}
+	}
+
+	return DeviceTypeNotSupported, fmt.Errorf("%s: deviceType not supported (%v)", deviceID, err)
 }
 
 // GetNetdevNameFromDeviceId returns the netdevice name from the passed device ID.

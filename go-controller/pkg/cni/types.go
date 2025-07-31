@@ -138,6 +138,7 @@ const (
 	DeviceTypeVFNetdev                       // VF with netdev driver
 	DeviceTypeVFVdpaVirtio                   // VF with virtio_vdpa driver
 	DeviceTypeVFVdpaVhost                    // VF with vhost_vdpa driver
+	DeviceTypeVDUSEVhost                     // VDUSE with vhost_vdpa driver
 	DeviceTypeSF                             // Auxiliary device: Subfunctions
 	DeviceTypeNotSupported                   // Device is not supported DeviceType
 )

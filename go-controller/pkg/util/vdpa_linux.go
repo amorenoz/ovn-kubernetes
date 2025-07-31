@@ -10,6 +10,7 @@ type VdpaDevice interface {
 
 type VdpaOps interface {
 	GetVdpaDeviceByPci(pciAddress string) (kvdpa.VdpaDevice, error)
+	GetVduseVdpaDevice(device string) (kvdpa.VdpaDevice, error)
 }
 
 type defaultVdpaOps struct {
@@ -34,4 +35,12 @@ func (v *defaultVdpaOps) GetVdpaDeviceByPci(pciAddress string) (kvdpa.VdpaDevice
 		return vdpaDevices[0], nil
 	}
 	return nil, err
+}
+
+func (v *defaultVdpaOps) GetVduseVdpaDevice(name string) (kvdpa.VdpaDevice, error) {
+	vduse, err := kvdpa.GetVduseDevice(name)
+	if err != nil {
+		return nil, err
+	}
+	return vduse.VdpaDevice()
 }
