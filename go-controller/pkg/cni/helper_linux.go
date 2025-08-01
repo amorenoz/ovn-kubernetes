@@ -328,10 +328,11 @@ func setupVDUSEInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 		return nil, nil, fmt.Errorf("failed to bind vdpa device to virtio_vdpa driver %s: %w", hostIfaceName, err)
 	}
 
-	if vdpaDev.VirtioNet() == nil || vdpaDev.VirtioNet().NetDev() == "" {
+	virtio_net, err := vdpaDev.VirtioNet()
+	if err != nil || virtio_net == nil || virtio_net.NetDev() == "" {
 		return nil, nil, fmt.Errorf("failed to read netdev for vduse device %s", hostIfaceName)
 	}
-	vdpaNetDevName := vdpaDev.VirtioNet().NetDev()
+	vdpaNetDevName := virtio_net.NetDev()
 
 	contNetDevName, err := safeMoveIfToNetns(vdpaNetDevName, netns, containerID)
 	if err != nil {

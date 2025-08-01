@@ -219,8 +219,13 @@ func GetNetdevNameFromDeviceId(deviceId string, deviceType DeviceType) (string, 
 			klog.Warningf("Error when searching for the virtio/vdpa netdev: %v", err)
 			return "", err
 		}
-		klog.V(2).Infof("deviceInfo.Vdpa.Driver is virtio, returning netdev %s", vdpaDevice.VirtioNet().NetDev())
-		netdevices = []string{vdpaDevice.VirtioNet().NetDev()}
+		virtio_net, err := vdpaDevice.VirtioNet()
+		if err != nil {
+			klog.Warningf("Error when retrieving virtio-vdpa netdev: %v", err)
+			return "", err
+		}
+		klog.V(2).Infof("deviceInfo.Vdpa.Driver is virtio, returning netdev %s", virtio_net.NetDev())
+		netdevices = []string{virtio_net.NetDev()}
 	case DeviceTypeSF:
 		netdevices, err = util.GetSriovnetOps().GetNetDevicesFromAux(deviceId)
 	}
