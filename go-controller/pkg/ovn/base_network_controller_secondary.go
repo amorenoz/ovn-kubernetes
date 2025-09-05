@@ -864,10 +864,9 @@ func getMasqueradeManagementIPSNATMatch(dstMac string) string {
 }
 
 func (bsnc *BaseSecondaryNetworkController) requireDHCP(pod *corev1.Pod) bool {
-	// Configure DHCP only for kubevirt VMs layer2 primary udn with subnets
+	// Configure DHCP only for kubevirt VMs layer2 udn with subnets
 	return kubevirt.IsPodOwnedByVirtualMachine(pod) &&
 		util.IsNetworkSegmentationSupportEnabled() &&
-		bsnc.IsPrimaryNetwork() &&
 		bsnc.TopologyType() == types.Layer2Topology
 }
 
